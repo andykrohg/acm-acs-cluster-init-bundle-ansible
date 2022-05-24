@@ -1,0 +1,82 @@
+- hosts: localhost
+  gather_facts: no
+  tasks:
+  - name: Get Central route
+    k8s_info:
+      kind: Route
+      api_version: route.openshift.io/v1
+      namespace: stackrox
+      name: central
+    register: r_stackrox_central_route
+    retries: 10
+    delay: 20
+    until:
+      - r_stackrox_central_route.resources[0].spec.host is defined
+
+  - name: Store central route as a fact
+    set_fact:
+      # yamllint disable-line rule:line-length
+      f_stackrox_central_addr: "{{ r_stackrox_central_route.resources[0].spec.host }}"
+
+  - name: Get Central Password Secret
+    k8s_info:
+      kind: Secret
+      api_version: v1
+      namespace: stackrox
+      name: central-htpasswd
+    register: central_password_secret
+
+  - name: Get Central password
+    set_fact:
+      central_password: '{{ central_password_secret.resources[0].data.password | b64decode }}'
+
+  - name: Wait for Central availability
+    uri:
+      url: "https://{{ f_stackrox_central_addr }}/v1/ping"
+      method: GET
+      user: admin
+      password: "{{ central_password }}"
+      force_basic_auth: true
+      validate_certs: false
+    register: result
+    until: result.status == 200
+    retries: 15
+    delay: 20
+
+  # ACS Secured Cluster Installation
+  - name: Get cluster init bundle
+    uri:
+      url: "https://{{ f_stackrox_central_addr }}/v1/cluster-init/init-bundles"
+      # random name for init-bundle
+      body: "{ \"name\": \"prod-{{ lookup('password', '/dev/null chars=ascii_lowercase,digits length=8') }}\"}"
+      method: POST
+      user: admin
+      password: "{{ central_password }}"
+      body_format: json
+      force_basic_auth: true
+      validate_certs: false
+    register: r_stackrox_cluster_init_response
+
+  - name: Store cluster init bundle as a fact
+    set_fact:
+      f_stackrox_bundle: "{{ r_stackrox_cluster_init_response.json.kubectlBundle | b64decode }}"
+
+  - name: Get kubeconfig for managed cluster
+    k8s_info:
+      kind: Secret
+      label_selectors:
+      - 'hive.openshift.io/cluster-deployment-name = {{ target_clusters[0] }}'
+      - hive.openshift.io/secret-type = kubeconfig
+    register: kubeconfig_secret
+
+  - name: Write kubeconfig to file
+    copy:
+      content: '{{ kubeconfig_secret.resources[0].data.kubeconfig | b64decode }}'
+      dest: /tmp/kubeconfig
+
+  - name: Create init-bundle secrets
+    k8s:
+      namespace: stackrox
+      state: present
+      definition: "{{ f_stackrox_bundle }}"
+      kubeconfig: /tmp/kubeconfig
