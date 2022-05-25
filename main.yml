@@ -74,6 +74,15 @@
       content: '{{ kubeconfig_secret.resources[0].data.kubeconfig | b64decode }}'
       dest: /tmp/kubeconfig
 
+  - name: Ensure stackrox namespace exists
+    k8s:
+      kubeconfig: /tmp/kubeconfig
+      definition: |
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: stackrox
+
   - name: Create init-bundle secrets
     k8s:
       namespace: stackrox
