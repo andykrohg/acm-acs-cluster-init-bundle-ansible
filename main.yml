@@ -65,7 +65,7 @@
     k8s_info:
       kind: Secret
       label_selectors:
-      - 'hive.openshift.io/cluster-deployment-name = {{ target_clusters[0] }}'
+      - 'hive.openshift.io/cluster-deployment-name = {{ cluster_deployment.clusterName }}'
       - hive.openshift.io/secret-type = kubeconfig
     register: kubeconfig_secret
 
